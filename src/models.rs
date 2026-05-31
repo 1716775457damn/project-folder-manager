@@ -9,6 +9,10 @@ pub struct ProjectInfo {
     pub description: String,
     pub tags: Vec<String>,
     pub added_date: String,
+    #[serde(default)]
+    pub auto_discovered: bool,
+    #[serde(default)]
+    pub project_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,4 +187,11 @@ pub enum SortBy {
     Name,
     Size,
     Modified,
+}
+
+#[derive(Debug, Clone)]
+pub enum AutoScanProgress {
+    ScanningDrive(String),
+    FoundProject(ProjectInfo),
+    Finished(Vec<ProjectInfo>),
 }

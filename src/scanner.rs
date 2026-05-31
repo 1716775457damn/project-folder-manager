@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use chrono::{DateTime, TimeZone, Utc};
 use walkdir::WalkDir;
 
-use crate::models::{CategoryStats, FileCategory, FileEntry, ScanResult};
+use crate::models::{AutoScanProgress, CategoryStats, FileCategory, FileEntry, ProjectInfo, ScanResult};
 
 pub fn scan_directory(root_path: &Path) -> Result<ScanResult, String> {
     if !root_path.exists() {
@@ -207,4 +207,248 @@ pub fn search_files(root_path: &Path, query: &str) -> Vec<PathBuf> {
     }
 
     results
+}
+
+// ============================================================
+// 自动磁盘扫描 - 发现项目文件夹
+// ============================================================
+
+/// 项目标志文件（精确匹配）
+const PROJECT_MARKER_FILES: &[&str] = &[
+    "Cargo.toml",
+    "package.json",
+    "CMakeLists.txt",
+    "Makefile",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "setup.py",
+    "setup.cfg",
+    "pyproject.toml",
+    "go.mod",
+    "composer.json",
+    "Gemfile",
+    "Dockerfile",
+    "docker-compose.yml",
+    "meson.build",
+    "BUILD",
+    "BUILD.bazel",
+    ".project",
+    "pubspec.yaml",
+    "mix.exs",
+    "rebar.config",
+    "stack.yaml",
+];
+
+/// 项目标志目录
+const PROJECT_MARKER_DIRS: &[&str] = &[".git"];
+
+/// 项目标志通配模式（按后缀）
+const PROJECT_MARKER_GLOBS: &[&str] = &[".sln", ".csproj", ".fsproj", ".cabal"];
+
+/// 扫描时排除的系统目录
+const SYSTEM_DIRS: &[&str] = &[
+    "Windows",
+    "Program Files",
+    "Program Files (x86)",
+    "ProgramData",
+    "$Recycle.Bin",
+    "System Volume Information",
+    "Recovery",
+    "PerfLogs",
+];
+
+/// 每层最多扫描目录数
+const MAX_DIRS_PER_LEVEL: usize = 200;
+
+/// 获取当前系统可用磁盘列表
+fn get_available_drives() -> Vec<String> {
+    let mut drives = Vec::new();
+    for letter in b'A'..=b'Z' {
+        let drive = format!("{}:\\", letter as char);
+        if Path::new(&drive).exists() {
+            drives.push(drive);
+        }
+    }
+    drives
+}
+
+/// 判断目录是否为项目文件夹
+pub fn is_project_dir(path: &Path) -> bool {
+    // 检查标志目录
+    for marker_dir in PROJECT_MARKER_DIRS {
+        let marker_path = path.join(marker_dir);
+        if marker_path.exists() && marker_path.is_dir() {
+            return true;
+        }
+    }
+
+    // 检查标志文件（精确匹配）
+    for marker_file in PROJECT_MARKER_FILES {
+        let marker_path = path.join(marker_file);
+        if marker_path.exists() && marker_path.is_file() {
+            return true;
+        }
+    }
+
+    // 检查通配模式
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            for glob in PROJECT_MARKER_GLOBS {
+                if name.ends_with(glob) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// 检测项目类型，按优先级返回类型名称
+pub fn detect_project_type(path: &Path) -> String {
+    let checks: &[(&str, &str)] = &[
+        ("Cargo.toml", "Rust"),
+        ("go.mod", "Go"),
+        ("package.json", "Node.js"),
+        ("CMakeLists.txt", "CMake"),
+        ("pom.xml", "Maven"),
+        ("build.gradle", "Gradle"),
+        ("build.gradle.kts", "Gradle"),
+        ("setup.py", "Python"),
+        ("pyproject.toml", "Python"),
+        ("pubspec.yaml", "Flutter"),
+        ("mix.exs", "Elixir"),
+        ("composer.json", "PHP"),
+        ("Gemfile", "Ruby"),
+        ("Makefile", "Make"),
+        ("Dockerfile", "Docker"),
+    ];
+
+    for (marker, type_name) in checks {
+        if path.join(marker).exists() {
+            return type_name.to_string();
+        }
+    }
+
+    // 检查通配模式
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.ends_with(".sln") {
+                return "VS Solution".to_string();
+            }
+            if name.ends_with(".cabal") || name == "stack.yaml" {
+                return "Haskell".to_string();
+            }
+            if name == "rebar.config" {
+                return "Erlang".to_string();
+            }
+        }
+    }
+
+    "Other".to_string()
+}
+
+/// 从路径创建 ProjectInfo
+fn create_project_info(path: &Path) -> ProjectInfo {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string_lossy().to_string());
+    let project_type = detect_project_type(path);
+
+    ProjectInfo {
+        name,
+        path: path.to_string_lossy().to_string(),
+        description: String::new(),
+        tags: vec![project_type.clone()],
+        added_date: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+        auto_discovered: true,
+        project_type,
+    }
+}
+
+/// 启动磁盘扫描线程，通过 channel 回传进度
+pub fn discover_projects(tx: std::sync::mpsc::Sender<AutoScanProgress>) {
+    std::thread::spawn(move || {
+        let drives = get_available_drives();
+        let mut all_found: Vec<ProjectInfo> = Vec::new();
+
+        for drive in &drives {
+            tx.send(AutoScanProgress::ScanningDrive(drive.clone()))
+                .ok();
+
+            let drive_path = Path::new(drive);
+            let entries = match fs::read_dir(drive_path) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            let mut top_dirs: Vec<PathBuf> = Vec::new();
+            for entry in entries.flatten() {
+                if top_dirs.len() >= MAX_DIRS_PER_LEVEL {
+                    break;
+                }
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                if SYSTEM_DIRS.contains(&name.as_str()) {
+                    continue;
+                }
+                if name.starts_with('.') {
+                    continue;
+                }
+                top_dirs.push(path);
+            }
+
+            for dir in &top_dirs {
+                if is_project_dir(dir) {
+                    let project = create_project_info(dir);
+                    tx.send(AutoScanProgress::FoundProject(project.clone()))
+                        .ok();
+                    all_found.push(project);
+                } else {
+                    // 深入一层检查子目录
+                    let sub_entries = match fs::read_dir(dir) {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    let mut count = 0;
+                    for sub_entry in sub_entries.flatten() {
+                        if count >= MAX_DIRS_PER_LEVEL {
+                            break;
+                        }
+                        let sub_path = sub_entry.path();
+                        if !sub_path.is_dir() {
+                            continue;
+                        }
+                        let sub_name = sub_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        if sub_name.starts_with('.') {
+                            continue;
+                        }
+                        if is_project_dir(&sub_path) {
+                            let project = create_project_info(&sub_path);
+                            tx.send(AutoScanProgress::FoundProject(project.clone()))
+                                .ok();
+                            all_found.push(project);
+                        }
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        tx.send(AutoScanProgress::Finished(all_found)).ok();
+    });
 }

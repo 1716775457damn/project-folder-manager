@@ -54,6 +54,12 @@ pub struct App {
 
     // 状态消息
     status_message: String,
+
+    // 自动磁盘扫描
+    pub auto_scan_rx: Option<std::sync::mpsc::Receiver<AutoScanProgress>>,
+    pub auto_discovered: Vec<ProjectInfo>,
+    pub auto_scanning_drive: String,
+    pub is_auto_scanning: bool,
 }
 
 impl App {
@@ -93,6 +99,10 @@ impl App {
             syntax_set,
             theme_set,
             status_message: String::new(),
+            auto_scan_rx: None,
+            auto_discovered: Vec::new(),
+            auto_scanning_drive: String::new(),
+            is_auto_scanning: false,
         }
     }
 
@@ -189,6 +199,8 @@ impl App {
                 .filter(|t| !t.is_empty())
                 .collect(),
             added_date: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+            auto_discovered: false,
+            project_type: String::new(),
         };
 
         self.config.projects.push(project);
@@ -277,6 +289,88 @@ impl App {
         }
     }
 
+    /// 启动自动磁盘扫描
+    pub fn start_auto_scan(&mut self) {
+        if self.is_auto_scanning {
+            return;
+        }
+        self.is_auto_scanning = true;
+        self.auto_discovered.clear();
+        self.auto_scanning_drive.clear();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.auto_scan_rx = Some(rx);
+
+        scanner::discover_projects(tx);
+    }
+
+    /// 每帧检查自动扫描进度
+    fn check_auto_scan(&mut self) {
+        if let Some(rx) = &self.auto_scan_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(AutoScanProgress::ScanningDrive(drive)) => {
+                        self.auto_scanning_drive = drive;
+                    }
+                    Ok(AutoScanProgress::FoundProject(project)) => {
+                        // 去重：跳过已在列表中的项目
+                        let already_exists = self.auto_discovered
+                            .iter()
+                            .any(|p| p.path == project.path)
+                            || self.config.projects
+                                .iter()
+                                .any(|p| p.path == project.path);
+                        if !already_exists {
+                            self.auto_discovered.push(project);
+                        }
+                    }
+                    Ok(AutoScanProgress::Finished(all)) => {
+                        self.auto_discovered = all
+                            .into_iter()
+                            .filter(|p| {
+                                !self.auto_discovered.iter().any(|existing| existing.path == p.path)
+                                    && !self.config.projects.iter().any(|existing| existing.path == p.path)
+                            })
+                            .collect();
+                        self.auto_scan_rx = None;
+                        self.is_auto_scanning = false;
+                        self.auto_scanning_drive.clear();
+                        self.status_message = format!(
+                            "磁盘扫描完成，发现 {} 个候选项目",
+                            self.auto_discovered.len()
+                        );
+                        return;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        self.auto_scan_rx = None;
+                        self.is_auto_scanning = false;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// 将自动发现的项目添加到正式列表
+    pub fn add_discovered_project(&mut self, index: usize) {
+        if index < self.auto_discovered.len() {
+            let project = self.auto_discovered.remove(index);
+            self.config.projects.push(project);
+            self.save_config();
+            self.status_message = "项目已添加".to_string();
+        }
+    }
+
+    /// 一键添加所有自动发现的项目
+    pub fn add_all_discovered(&mut self) {
+        let count = self.auto_discovered.len();
+        let projects: Vec<ProjectInfo> = self.auto_discovered.drain(..).collect();
+        self.config.projects.extend(projects);
+        self.save_config();
+        self.status_message = format!("已添加 {} 个项目", count);
+    }
+
     /// 保存配置
     fn save_config(&self) {
         if let Err(e) = config::save_config(&self.config, Some(&self.config_path)) {
@@ -289,6 +383,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // 检查后台扫描
         self.check_scan_result();
+        self.check_auto_scan();
 
         // 渲染侧边栏
         ui::sidebar::render(self, ctx);
@@ -299,7 +394,7 @@ impl eframe::App for App {
         });
 
         // 持续刷新以处理后台任务
-        if self.is_scanning {
+        if self.is_scanning || self.is_auto_scanning {
             ctx.request_repaint();
         }
     }
