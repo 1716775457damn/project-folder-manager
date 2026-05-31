@@ -27,8 +27,8 @@ pub fn render(app: &mut App, ui: &mut Ui) {
         return;
     }
 
-    let scan = app.scan_result.take();
-    if let Some(ref scan_data) = scan {
+    let scan = app.scan_result.as_ref();
+    if let Some(scan_data) = scan {
         ScrollArea::vertical()
             .auto_shrink([false; 2])
             .max_height(ui.available_height() - 30.0)
@@ -36,7 +36,6 @@ pub fn render(app: &mut App, ui: &mut Ui) {
                 render_node(app, ui, &scan_data.root, 0);
             });
     }
-    app.scan_result = scan;
 }
 
 fn render_node(app: &mut App, ui: &mut Ui, entry: &FileEntry, depth: usize) {
@@ -107,32 +106,40 @@ fn render_node(app: &mut App, ui: &mut Ui, entry: &FileEntry, depth: usize) {
     });
 
     if entry.is_dir && is_expanded {
-        let mut sorted_children = entry.children.clone();
-        sort_entries(&mut sorted_children, app.sort_by, app.sort_descending);
-        for child in &sorted_children {
-            render_node(app, ui, child, depth + 1);
+        let children = &entry.children;
+        let mut indices: Vec<usize> = (0..children.len()).collect();
+        sort_indices(children, &mut indices, app.sort_by, app.sort_descending);
+        for &idx in &indices {
+            render_node(app, ui, &children[idx], depth + 1);
         }
     }
 }
 
-fn sort_entries(entries: &mut [FileEntry], sort_by: crate::models::SortBy, descending: bool) {
+fn sort_indices(
+    entries: &[FileEntry],
+    indices: &mut [usize],
+    sort_by: crate::models::SortBy,
+    descending: bool,
+) {
     match sort_by {
         crate::models::SortBy::Name => {
-            entries.sort_by(|a, b| {
-                if a.is_dir != b.is_dir {
-                    return b.is_dir.cmp(&a.is_dir);
+            indices.sort_by(|&a, &b| {
+                let ea = &entries[a];
+                let eb = &entries[b];
+                if ea.is_dir != eb.is_dir {
+                    return eb.is_dir.cmp(&ea.is_dir);
                 }
                 if descending {
-                    b.name.to_lowercase().cmp(&a.name.to_lowercase())
+                    eb.name.to_lowercase().cmp(&ea.name.to_lowercase())
                 } else {
-                    a.name.to_lowercase().cmp(&b.name.to_lowercase())
+                    ea.name.to_lowercase().cmp(&eb.name.to_lowercase())
                 }
             });
         }
         crate::models::SortBy::Size => {
-            entries.sort_by(|a, b| {
-                let sa = a.total_size();
-                let sb = b.total_size();
+            indices.sort_by(|&a, &b| {
+                let sa = entries[a].total_size();
+                let sb = entries[b].total_size();
                 if descending {
                     sb.cmp(&sa)
                 } else {
@@ -141,11 +148,11 @@ fn sort_entries(entries: &mut [FileEntry], sort_by: crate::models::SortBy, desce
             });
         }
         crate::models::SortBy::Modified => {
-            entries.sort_by(|a, b| {
+            indices.sort_by(|&a, &b| {
                 if descending {
-                    b.last_modified.cmp(&a.last_modified)
+                    entries[b].last_modified.cmp(&entries[a].last_modified)
                 } else {
-                    a.last_modified.cmp(&b.last_modified)
+                    entries[a].last_modified.cmp(&entries[b].last_modified)
                 }
             });
         }

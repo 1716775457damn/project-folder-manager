@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use egui::{Color32, RichText, ScrollArea, Ui};
 
 use crate::app::App;
@@ -10,13 +12,16 @@ pub fn render(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let response = ui.text_edit_singleline(&mut app.search_query);
 
-        // 回车触发搜索
-        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            app.perform_search();
+        // 输入即标记待搜索，300ms 内无新输入则触发
+        if response.changed() {
+            app.search_debounce = Some(std::time::Instant::now());
+            app.pending_search = true;
         }
 
-        if ui.button("搜索").clicked() {
-            app.perform_search();
+        // 无输入时立即清空结果
+        if app.search_query.is_empty() && !app.search_results.is_empty() {
+            app.search_results = Arc::new(Vec::new());
+            app.pending_search = false;
         }
 
         if ui.button("清除").clicked() {
@@ -39,7 +44,7 @@ pub fn render(app: &mut App, ui: &mut Ui) {
             .auto_shrink([false; 2])
             .max_height(200.0)
             .show(ui, |ui| {
-                let results = app.search_results.clone();
+                let results = Arc::clone(&app.search_results);
                 for path in &results {
                     let name = path
                         .file_name()

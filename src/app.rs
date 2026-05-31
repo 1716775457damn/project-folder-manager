@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use chrono::Local;
 use egui::{Color32, RichText, ScrollArea, TextureHandle};
@@ -20,7 +23,7 @@ pub struct App {
 
     // 项目状态
     pub selected_project_index: Option<usize>,
-    pub scan_result: Option<ScanResult>,
+    pub scan_result: Option<Arc<ScanResult>>,
     pub is_scanning: bool,
     scan_rx: Option<std::sync::mpsc::Receiver<ScanResult>>,
 
@@ -36,7 +39,9 @@ pub struct App {
 
     // 搜索
     pub search_query: String,
-    pub search_results: Vec<PathBuf>,
+    pub search_results: Arc<Vec<PathBuf>>,
+    search_debounce: Option<Instant>,
+    pending_search: bool,
 
     // 添加项目对话框
     pub show_add_dialog: bool,
@@ -57,6 +62,7 @@ pub struct App {
 
     // 自动磁盘扫描
     pub auto_scan_rx: Option<std::sync::mpsc::Receiver<AutoScanProgress>>,
+    pub auto_scan_cancel: Option<Arc<AtomicBool>>,
     pub auto_discovered: Vec<ProjectInfo>,
     pub auto_scanning_drive: String,
     pub is_auto_scanning: bool,
@@ -64,10 +70,7 @@ pub struct App {
 
 impl App {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let config_path = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("config.json")))
-            .unwrap_or_else(|| PathBuf::from("config.json"));
+        let config_path = config::default_config_path();
 
         let config = config::load_config(Some(&config_path));
 
@@ -89,7 +92,9 @@ impl App {
             preview_content: PreviewContent::Empty,
             texture_cache: HashMap::new(),
             search_query: String::new(),
-            search_results: Vec::new(),
+            search_results: Arc::new(Vec::new()),
+            search_debounce: None,
+            pending_search: false,
             show_add_dialog: false,
             new_project_path: String::new(),
             new_project_name: String::new(),
@@ -100,6 +105,7 @@ impl App {
             theme_set,
             status_message: String::new(),
             auto_scan_rx: None,
+            auto_scan_cancel: None,
             auto_discovered: Vec::new(),
             auto_scanning_drive: String::new(),
             is_auto_scanning: false,
@@ -115,7 +121,7 @@ impl App {
         self.selected_project_index = Some(index);
         self.preview_content = PreviewContent::Empty;
         self.preview_path = None;
-        self.search_results.clear();
+        self.search_results = Arc::new(Vec::new());
         self.search_query.clear();
         self.expanded_dirs.clear();
         self.scan_result = None;
@@ -170,7 +176,7 @@ impl App {
                     }
                 }
 
-                self.scan_result = Some(result);
+                self.scan_result = Some(Arc::new(result));
                 self.scan_rx = None;
                 self.is_scanning = false;
                 self.status_message = "扫描完成".to_string();
@@ -277,7 +283,7 @@ impl App {
 
     /// 执行搜索
     pub fn perform_search(&mut self) {
-        self.search_results.clear();
+        self.search_results = Arc::new(Vec::new());
 
         if self.search_query.is_empty() {
             return;
@@ -285,7 +291,7 @@ impl App {
 
         if let Some(idx) = self.selected_project_index {
             let root = PathBuf::from(&self.config.projects[idx].path);
-            self.search_results = scanner::search_files(&root, &self.search_query);
+            self.search_results = Arc::new(scanner::search_files(&root, &self.search_query));
         }
     }
 
@@ -298,10 +304,20 @@ impl App {
         self.auto_discovered.clear();
         self.auto_scanning_drive.clear();
 
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.auto_scan_cancel = Some(cancel.clone());
+
         let (tx, rx) = std::sync::mpsc::channel();
         self.auto_scan_rx = Some(rx);
 
-        scanner::discover_projects(tx);
+        scanner::discover_projects(tx, cancel);
+    }
+
+    /// 取消正在进行的自动扫描
+    pub fn cancel_auto_scan(&mut self) {
+        if let Some(ref cancel) = self.auto_scan_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     /// 每帧检查自动扫描进度
@@ -324,15 +340,10 @@ impl App {
                             self.auto_discovered.push(project);
                         }
                     }
-                    Ok(AutoScanProgress::Finished(all)) => {
-                        self.auto_discovered = all
-                            .into_iter()
-                            .filter(|p| {
-                                !self.auto_discovered.iter().any(|existing| existing.path == p.path)
-                                    && !self.config.projects.iter().any(|existing| existing.path == p.path)
-                            })
-                            .collect();
+                    Ok(AutoScanProgress::Finished) => {
+                        // 不再覆盖 auto_discovered：FoundProject 事件已逐个积累完毕
                         self.auto_scan_rx = None;
+                        self.auto_scan_cancel = None;
                         self.is_auto_scanning = false;
                         self.auto_scanning_drive.clear();
                         self.status_message = format!(
@@ -344,6 +355,7 @@ impl App {
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         self.auto_scan_rx = None;
+                        self.auto_scan_cancel = None;
                         self.is_auto_scanning = false;
                         return;
                     }
@@ -385,6 +397,16 @@ impl eframe::App for App {
         self.check_scan_result();
         self.check_auto_scan();
 
+        // 搜索防抖：300ms 无输入后触发
+        if self.pending_search {
+            if let Some(instant) = self.search_debounce {
+                if instant.elapsed() >= Duration::from_millis(300) {
+                    self.perform_search();
+                    self.pending_search = false;
+                }
+            }
+        }
+
         // 渲染侧边栏
         ui::sidebar::render(self, ctx);
 
@@ -404,6 +426,73 @@ impl eframe::App for App {
     }
 }
 
+/// 无项目选中时显示引导式欢迎页面
+fn render_welcome(app: &mut App, ui: &mut egui::Ui) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(60.0);
+        ui.heading(RichText::new("Project Folder Manager").size(26.0));
+
+        ui.add_space(20.0);
+
+        // 引导卡片
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_min_width(400.0);
+            ui.vertical_centered(|ui| {
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new("还没有项目？")
+                        .size(15.0)
+                        .strong(),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("添加一个项目文件夹，开始查看文件结构和空间占用")
+                        .size(12.0)
+                        .color(Color32::GRAY),
+                );
+                ui.add_space(12.0);
+                if ui
+                    .button(RichText::new("添加项目").size(14.0))
+                    .clicked()
+                {
+                    app.show_add_dialog = true;
+                }
+                ui.add_space(4.0);
+
+                ui.label(
+                    RichText::new("— 或 —")
+                        .size(11.0)
+                        .color(Color32::GRAY),
+                );
+                ui.add_space(4.0);
+
+                if ui
+                    .button(RichText::new("自动扫描磁盘发现项目").size(14.0))
+                    .clicked()
+                {
+                    app.start_auto_scan();
+                }
+                ui.add_space(12.0);
+            });
+        });
+
+        // 如果有已发现的项目，直接展示
+        if !app.auto_discovered.is_empty() {
+            ui.add_space(20.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(format!(
+                    "已发现 {} 个候选项目，点击添加",
+                    app.auto_discovered.len()
+                ))
+                .size(13.0)
+                .color(Color32::from_rgb(255, 200, 100)),
+            );
+        }
+    });
+}
+
 /// 渲染主区域布局
 fn render_main_area(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context) {
     // 顶部工具栏
@@ -421,20 +510,7 @@ fn render_main_area(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context) {
     ui.separator();
 
     if app.selected_project_index.is_none() {
-        // 无项目选中时的欢迎页面
-        ui.vertical_centered(|ui| {
-            ui.add_space(80.0);
-            ui.heading(RichText::new("Project Folder Manager").size(24.0));
-            ui.add_space(16.0);
-            ui.label(
-                RichText::new("本地项目文件夹可视化管理系统")
-                    .size(14.0)
-                    .color(Color32::GRAY),
-            );
-            ui.add_space(24.0);
-            ui.label("请点击左侧面板的「添加项目」按钮添加要监控的文件夹");
-            ui.label("或选择已有项目查看详情");
-        });
+        render_welcome(app, ui);
         return;
     }
 
@@ -617,14 +693,6 @@ fn render_preview_panel(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context) {
                         .size(13.0)
                         .color(Color32::from_rgb(180, 180, 180)),
                 );
-            });
-        }
-
-        PreviewContent::Loading => {
-            ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
-                ui.spinner();
-                ui.label("加载中...");
             });
         }
 

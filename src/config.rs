@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::models::AppConfig;
 
 /// 默认配置文件路径（与可执行文件同目录）
-fn default_config_path() -> PathBuf {
+pub fn default_config_path() -> PathBuf {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))

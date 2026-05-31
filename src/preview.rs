@@ -8,7 +8,7 @@ use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
-use crate::models::PreviewContent;
+use crate::models::{FileCategory, PreviewContent};
 
 /// 加载文件预览内容
 pub fn load_preview(file_path: &Path) -> PreviewContent {
@@ -22,15 +22,13 @@ pub fn load_preview(file_path: &Path) -> PreviewContent {
         .unwrap_or_default();
 
     // 图片预览
-    if matches!(
-        extension.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico"
-    ) {
+    if FileCategory::from_extension(&extension) == FileCategory::Image {
         return load_image_preview(file_path);
     }
 
     // 文本文件（包括代码和 Markdown）
-    if is_text_file(&extension) || is_code_file(&extension) {
+    let cat = FileCategory::from_extension(&extension);
+    if cat == FileCategory::Code || cat == FileCategory::Document {
         return load_text_preview(file_path, &extension);
     }
 
@@ -46,21 +44,49 @@ pub fn load_preview(file_path: &Path) -> PreviewContent {
     ))
 }
 
-/// 加载图片预览
+/// 加载图片预览（限制最大尺寸，沙箱化防止损坏图片 panic）
 fn load_image_preview(path: &Path) -> PreviewContent {
-    match image::open(path) {
-        Ok(img) => {
-            let (width, height) = img.dimensions();
-            let rgba = img.into_rgba8();
-            let raw = rgba.into_raw();
-            PreviewContent::Image(raw, [width as usize, height as usize])
-        }
-        Err(e) => PreviewContent::Unsupported(format!("图片加载失败: {}", e)),
-    }
+    let path_buf = path.to_path_buf();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| image::open(&path_buf)));
+
+    let img = match result {
+        Ok(Ok(img)) => img,
+        Ok(Err(e)) => return PreviewContent::Unsupported(format!("图片加载失败: {}", e)),
+        Err(_) => return PreviewContent::Unsupported("此图片文件已损坏，无法预览".to_string()),
+    };
+
+    const MAX_DIM: u32 = 1920;
+    let (w, h) = img.dimensions();
+    let img = if w > MAX_DIM || h > MAX_DIM {
+        let ratio = MAX_DIM as f64 / w.max(h) as f64;
+        img.resize(
+            (w as f64 * ratio) as u32,
+            (h as f64 * ratio) as u32,
+            image::imageops::FilterType::Lanczos3,
+        )
+    } else {
+        img
+    };
+    let (width, height) = img.dimensions();
+    let rgba = img.into_rgba8();
+    let raw = rgba.into_raw();
+    PreviewContent::Image(raw, [width as usize, height as usize])
 }
 
 /// 加载文本/代码预览
 fn load_text_preview(path: &Path, extension: &str) -> PreviewContent {
+    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
+    // 先检查文件大小，防止 OOM
+    if let Ok(meta) = fs::metadata(path) {
+        if meta.len() > MAX_FILE_SIZE {
+            return PreviewContent::Unsupported(format!(
+                "文件过大 ({}), 无法预览文本",
+                humansize::format_size(meta.len(), humansize::BINARY)
+            ));
+        }
+    }
+
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => return PreviewContent::Unsupported(format!("文件读取失败: {}", e)),
@@ -99,7 +125,13 @@ pub fn highlight_code(
         .find_syntax_by_extension(extension)
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
-    let theme = &theme_set.themes["base16-ocean.dark"];
+    let theme = theme_set
+        .themes
+        .get("base16-ocean.dark")
+        .unwrap_or_else(|| {
+            // fallback: 任意可用主题
+            theme_set.themes.values().next().unwrap()
+        });
     let mut highlighter = HighlightLines::new(syntax, theme);
 
     let mut spans = Vec::new();
@@ -145,25 +177,4 @@ pub fn get_or_create_texture(
     let handle = ctx.load_texture(key.clone(), color_image, options);
     cache.insert(key, handle.clone());
     handle
-}
-
-/// 判断是否为文本文件
-fn is_text_file(ext: &str) -> bool {
-    matches!(
-        ext,
-        "txt" | "md" | "markdown" | "rst" | "log" | "csv" | "tsv"
-    )
-}
-
-/// 判断是否为代码文件
-fn is_code_file(ext: &str) -> bool {
-    matches!(
-        ext,
-        "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "go" | "java" | "c" | "cpp" | "h" | "hpp"
-            | "cs" | "rb" | "php" | "swift" | "kt" | "kts" | "scala" | "r" | "lua" | "sh"
-            | "bash" | "zsh" | "ps1" | "bat" | "sql" | "html" | "css" | "scss" | "less"
-            | "xml" | "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "vue"
-            | "svelte" | "dart" | "ex" | "exs" | "erl" | "hs" | "elm" | "clj" | "cljs"
-            | "ml" | "mli" | "nim" | "zig" | "v" | "proto" | "cmake" | "gradle"
-    )
 }

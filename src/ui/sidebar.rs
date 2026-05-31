@@ -1,6 +1,7 @@
 use egui::{RichText, ScrollArea, Ui};
 
 use crate::app::App;
+use crate::models::ProjectInfo;
 
 pub fn render(app: &mut App, ctx: &egui::Context) {
     egui::SidePanel::left("project_sidebar")
@@ -55,6 +56,9 @@ fn render_auto_scan(app: &mut App, ui: &mut Ui) {
                     .size(12.0)
                     .color(egui::Color32::from_rgb(255, 200, 100)),
             );
+            if ui.button("取消").clicked() {
+                app.cancel_auto_scan();
+            }
         });
     } else {
         if ui
@@ -86,7 +90,7 @@ fn render_auto_scan(app: &mut App, ui: &mut Ui) {
                 let indices: Vec<usize> = (0..app.auto_discovered.len()).collect();
                 for &idx in &indices {
                     let project = app.auto_discovered[idx].clone();
-                    let type_color = project_type_color(&project.project_type);
+                    let type_color = ProjectInfo::type_color(&project.project_type);
 
                     let resp = ui.horizontal(|ui| {
                         // 类型标签
@@ -143,28 +147,6 @@ fn render_auto_scan(app: &mut App, ui: &mut Ui) {
             }
         }
         ui.separator();
-    }
-}
-
-fn project_type_color(project_type: &str) -> egui::Color32 {
-    match project_type {
-        "Rust" => egui::Color32::from_rgb(222, 165, 132),
-        "Node.js" => egui::Color32::from_rgb(247, 223, 30),
-        "Go" => egui::Color32::from_rgb(0, 173, 216),
-        "Python" => egui::Color32::from_rgb(55, 118, 171),
-        "Flutter" => egui::Color32::from_rgb(2, 180, 250),
-        "CMake" => egui::Color32::from_rgb(200, 200, 200),
-        "Maven" => egui::Color32::from_rgb(204, 52, 45),
-        "Gradle" => egui::Color32::from_rgb(2, 48, 74),
-        "VS Solution" => egui::Color32::from_rgb(150, 100, 200),
-        "Elixir" => egui::Color32::from_rgb(75, 42, 92),
-        "PHP" => egui::Color32::from_rgb(79, 93, 149),
-        "Ruby" => egui::Color32::from_rgb(204, 52, 45),
-        "Make" => egui::Color32::from_rgb(200, 200, 200),
-        "Docker" => egui::Color32::from_rgb(36, 150, 237),
-        "Haskell" => egui::Color32::from_rgb(69, 58, 82),
-        "Erlang" => egui::Color32::from_rgb(162, 0, 51),
-        _ => egui::Color32::from_rgb(140, 140, 140),
     }
 }
 
@@ -244,7 +226,7 @@ fn render_project_item(app: &mut App, ui: &mut Ui, idx: usize) {
         // 项目类型标签（自动发现的显示）
         let mut x_offset = 8.0;
         if project.auto_discovered && !project.project_type.is_empty() {
-            let type_color = project_type_color(&project.project_type);
+            let type_color = ProjectInfo::type_color(&project.project_type);
             let type_pos = egui::pos2(rect.left() + x_offset, rect.top() + 4.0);
             painter.text(
                 type_pos,
@@ -363,7 +345,17 @@ fn render_add_dialog(app: &mut App, ui: &mut Ui) {
 
             ui.label("文件夹路径:");
             ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut app.new_project_path);
+                let path_resp = ui.text_edit_singleline(&mut app.new_project_path);
+                // 路径输入后自动填充项目名称
+                if path_resp.changed() && app.new_project_name.is_empty() {
+                    let path = std::path::Path::new(&app.new_project_path);
+                    if path.is_dir() {
+                        app.new_project_name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                    }
+                }
                 if ui.button("浏览...").clicked() {
                     if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                         app.new_project_path = folder.to_string_lossy().to_string();

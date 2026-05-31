@@ -34,16 +34,14 @@ pub fn render(scan_result: &ScanResult, ui: &mut Ui) {
 
         ui.add_space(10.0);
 
-        // 分类统计 — 进度条风格
-        let total = scan_result.total_size.max(1); // 避免除零
-        let bar_height = 18.0;
+        // 分类统计 — 使用 egui ProgressBar
+        let total = scan_result.total_size.max(1);
 
         for stats in &scan_result.category_stats {
             let ratio = stats.size as f32 / total as f32;
             let percentage = ratio * 100.0;
 
             ui.horizontal(|ui| {
-                // 分类标签
                 ui.label(
                     RichText::new(format!(
                         "{} {}",
@@ -53,39 +51,13 @@ pub fn render(scan_result: &ScanResult, ui: &mut Ui) {
                     .size(12.0),
                 );
 
-                // 进度条
-                let desired_width = 200.0;
-                let (rect, _) = ui.allocate_at_least(
-                    egui::vec2(desired_width, bar_height),
-                    egui::Sense::hover(),
-                );
+                // egui 内置进度条
+                let bar = egui::ProgressBar::new(ratio)
+                    .desired_width(200.0)
+                    .fill(stats.category.color())
+                    .text(format!("{:.1}%", percentage));
+                ui.add(bar);
 
-                if ui.is_rect_visible(rect) {
-                    let painter = ui.painter_at(rect);
-
-                    // 背景
-                    painter.rect_filled(rect, 2.0, Color32::from_gray(35));
-
-                    // 进度
-                    if ratio > 0.001 {
-                        let fill_rect = egui::Rect::from_min_size(
-                            rect.min,
-                            egui::vec2(rect.width() * ratio, rect.height()),
-                        );
-                        painter.rect_filled(fill_rect, 2.0, stats.category.color());
-                    }
-
-                    // 百分比文本
-                    painter.text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        format!("{:.1}%", percentage),
-                        egui::FontId::proportional(11.0),
-                        Color32::WHITE,
-                    );
-                }
-
-                // 大小和文件数
                 ui.label(
                     RichText::new(format!(
                         "{} ({} 文件)",
@@ -117,38 +89,4 @@ pub fn render(scan_result: &ScanResult, ui: &mut Ui) {
     });
 }
 
-/// 计算分类统计（用于独立渲染）
-pub fn calculate_category_stats(
-    entries: &[crate::models::FileEntry],
-) -> Vec<CategoryStats> {
-    let mut map: std::collections::HashMap<FileCategory, (u64, usize)> =
-        std::collections::HashMap::new();
 
-    fn collect(entry: &crate::models::FileEntry, map: &mut std::collections::HashMap<FileCategory, (u64, usize)>) {
-        if !entry.is_dir {
-            let data = map.entry(entry.category).or_insert((0, 0));
-            data.0 += entry.size;
-            data.1 += 1;
-        }
-        for child in &entry.children {
-            collect(child, map);
-        }
-    }
-
-    for entry in entries {
-        collect(entry, &mut map);
-    }
-
-    let mut stats: Vec<CategoryStats> = FileCategory::all()
-        .iter()
-        .filter_map(|cat| {
-            map.get(cat).map(|&(size, count)| CategoryStats {
-                category: *cat,
-                size,
-                count,
-            })
-        })
-        .collect();
-    stats.sort_by_key(|s| -(s.size as i64));
-    stats
-}

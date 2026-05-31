@@ -15,6 +15,31 @@ pub struct ProjectInfo {
     pub project_type: String,
 }
 
+impl ProjectInfo {
+    /// 根据项目类型返回对应的品牌色
+    pub fn type_color(project_type: &str) -> egui::Color32 {
+        match project_type {
+            "Rust" => egui::Color32::from_rgb(222, 165, 132),
+            "Node.js" => egui::Color32::from_rgb(247, 223, 30),
+            "Go" => egui::Color32::from_rgb(0, 173, 216),
+            "Python" => egui::Color32::from_rgb(55, 118, 171),
+            "Flutter" => egui::Color32::from_rgb(2, 180, 250),
+            "CMake" => egui::Color32::from_rgb(200, 200, 200),
+            "Maven" => egui::Color32::from_rgb(204, 52, 45),
+            "Gradle" => egui::Color32::from_rgb(2, 48, 74),
+            "VS Solution" => egui::Color32::from_rgb(150, 100, 200),
+            "Elixir" => egui::Color32::from_rgb(75, 42, 92),
+            "PHP" => egui::Color32::from_rgb(79, 93, 149),
+            "Ruby" => egui::Color32::from_rgb(204, 52, 45),
+            "Make" => egui::Color32::from_rgb(200, 200, 200),
+            "Docker" => egui::Color32::from_rgb(36, 150, 237),
+            "Haskell" => egui::Color32::from_rgb(69, 58, 82),
+            "Erlang" => egui::Color32::from_rgb(162, 0, 51),
+            _ => egui::Color32::from_rgb(140, 140, 140),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub projects: Vec<ProjectInfo>,
@@ -123,35 +148,17 @@ pub struct FileEntry {
     pub category: FileCategory,
     pub children: Vec<FileEntry>,
     pub last_modified: Option<DateTime<Utc>>,
+    /// 该目录的总大小（含所有子节点），扫描后填充，仅对目录有效
+    pub size_recursive: u64,
 }
 
 impl FileEntry {
-    pub fn extension(&self) -> String {
-        self.path
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
-            .unwrap_or_default()
-    }
-
+    /// 返回树的总大小，目录会使用预计算的缓存值
     pub fn total_size(&self) -> u64 {
         if !self.is_dir {
             return self.size;
         }
-        self.children.iter().map(|c| c.total_size()).sum()
-    }
-
-    pub fn file_count(&self) -> usize {
-        if !self.is_dir {
-            return 1;
-        }
-        self.children.iter().map(|c| c.file_count()).sum()
-    }
-
-    pub fn dir_count(&self) -> usize {
-        if !self.is_dir {
-            return 0;
-        }
-        1 + self.children.iter().map(|c| c.dir_count()).sum::<usize>()
+        self.size_recursive
     }
 }
 
@@ -178,7 +185,6 @@ pub enum PreviewContent {
     Code { text: String, language: String },
     Markdown(String),
     Unsupported(String),
-    Loading,
     Empty,
 }
 
@@ -193,5 +199,5 @@ pub enum SortBy {
 pub enum AutoScanProgress {
     ScanningDrive(String),
     FoundProject(ProjectInfo),
-    Finished(Vec<ProjectInfo>),
+    Finished,
 }
