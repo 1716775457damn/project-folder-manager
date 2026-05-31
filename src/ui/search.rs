@@ -45,7 +45,7 @@ pub fn render(app: &mut App, ui: &mut Ui) {
             .max_height(200.0)
             .show(ui, |ui| {
                 let results = Arc::clone(&app.search_results);
-                for path in &results {
+                for path in results.iter() {
                     let name = path
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())

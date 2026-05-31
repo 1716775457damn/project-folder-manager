@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use crate::models::FileCategory;
 use image::GenericImageView;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
@@ -104,7 +105,7 @@ fn load_text_preview(path: &Path, extension: &str) -> PreviewContent {
         return PreviewContent::Markdown(preview_text);
     }
 
-    if is_code_file(extension) {
+    if FileCategory::from_extension(extension) == FileCategory::Code {
         return PreviewContent::Code {
             text: preview_text,
             language: extension.to_string(),

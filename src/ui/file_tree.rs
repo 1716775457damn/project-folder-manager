@@ -29,11 +29,12 @@ pub fn render(app: &mut App, ui: &mut Ui) {
 
     let scan = app.scan_result.as_ref();
     if let Some(scan_data) = scan {
+        let root = scan_data.root.clone();
         ScrollArea::vertical()
             .auto_shrink([false; 2])
             .max_height(ui.available_height() - 30.0)
             .show(ui, |ui| {
-                render_node(app, ui, &scan_data.root, 0);
+                render_node(app, ui, &root, 0);
             });
     }
 }

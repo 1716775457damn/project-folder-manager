@@ -40,8 +40,8 @@ pub struct App {
     // 搜索
     pub search_query: String,
     pub search_results: Arc<Vec<PathBuf>>,
-    search_debounce: Option<Instant>,
-    pending_search: bool,
+    pub search_debounce: Option<Instant>,
+    pub pending_search: bool,
 
     // 添加项目对话框
     pub show_add_dialog: bool,
