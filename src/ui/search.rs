@@ -26,7 +26,7 @@ pub fn render(app: &mut App, ui: &mut Ui) {
 
         if ui.button("清除").clicked() {
             app.search_query.clear();
-            app.search_results.clear();
+            app.search_results = Arc::new(Vec::new());
         }
     });
 

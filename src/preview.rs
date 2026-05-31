@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::models::FileCategory;
 use image::GenericImageView;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;

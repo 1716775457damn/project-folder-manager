@@ -1,6 +1,6 @@
 use egui::{Color32, RichText, Ui};
 
-use crate::models::{CategoryStats, FileCategory, ScanResult};
+use crate::models::ScanResult;
 
 /// 渲染统计面板
 pub fn render(scan_result: &ScanResult, ui: &mut Ui) {
