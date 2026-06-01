@@ -215,7 +215,9 @@ impl App {
         };
 
         self.config.projects.push(project);
-        self.save_config();
+        if !self.save_config() {
+            return;
+        }
         self.show_add_dialog = false;
 
         // 自动选中新添加的项目并触发扫描
@@ -248,8 +250,9 @@ impl App {
                 }
             }
 
-            self.save_config();
-            self.status_message = "项目已删除".to_string();
+            if self.save_config() {
+                self.status_message = "项目已删除".to_string();
+            }
         }
     }
 
@@ -277,7 +280,9 @@ impl App {
                 .map(|t| t.trim().to_string())
                 .filter(|t| !t.is_empty())
                 .collect();
-            self.save_config();
+            if !self.save_config() {
+                return;
+            }
             self.status_message = "项目已更新".to_string();
 
             // 如果路径变了，重新扫描
@@ -386,7 +391,9 @@ impl App {
         if index < self.auto_discovered.len() {
             let project = self.auto_discovered.remove(index);
             self.config.projects.push(project);
-            self.save_config();
+            if !self.save_config() {
+                return;
+            }
 
             // 自动选中并扫描
             let idx = self.config.projects.len() - 1;
@@ -408,7 +415,9 @@ impl App {
         let count = self.auto_discovered.len();
         let projects: Vec<ProjectInfo> = self.auto_discovered.drain(..).collect();
         self.config.projects.extend(projects);
-        self.save_config();
+        if !self.save_config() {
+            return;
+        }
 
         // 自动选中最后一个并扫描
         if count > 0 {
@@ -426,10 +435,14 @@ impl App {
         self.status_message = format!("已添加 {} 个项目", count);
     }
 
-    /// 保存配置
-    fn save_config(&self) {
-        if let Err(e) = config::save_config(&self.config, Some(&self.config_path)) {
-            eprintln!("保存配置失败: {}", e);
+    /// 保存配置，失败时将错误信息写入 status_message
+    fn save_config(&mut self) -> bool {
+        match config::save_config(&self.config, Some(&self.config_path)) {
+            Ok(()) => true,
+            Err(e) => {
+                self.status_message = format!("配置保存失败: {}", e);
+                false
+            }
         }
     }
 }

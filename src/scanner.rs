@@ -204,7 +204,7 @@ fn get_modified_time(path: &Path) -> Option<DateTime<Utc>> {
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| Utc.timestamp_opt(d.as_secs() as i64, 0).unwrap())
+        .and_then(|d| Utc.timestamp_opt(d.as_secs() as i64, 0).single())
 }
 
 pub fn search_files(root_path: &Path, query: &str) -> Vec<PathBuf> {
