@@ -497,7 +497,7 @@ fn is_project_container(name: &str) -> bool {
 }
 
 /// 对目录列表排序：项目容器目录排在前面
-fn sort_dirs_by_priority(dirs: &mut Vec<PathBuf>) {
+fn sort_dirs_by_priority(dirs: &mut [PathBuf]) {
     dirs.sort_by(|a, b| {
         let a_name = a.file_name().map(|n| n.to_string_lossy().to_string().to_lowercase()).unwrap_or_default();
         let b_name = b.file_name().map(|n| n.to_string_lossy().to_string().to_lowercase()).unwrap_or_default();

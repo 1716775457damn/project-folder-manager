@@ -822,12 +822,12 @@ fn render_preview_panel(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context) {
 /// 简易 Markdown 渲染
 fn render_markdown(ui: &mut egui::Ui, text: &str) {
     for line in text.lines() {
-        if line.starts_with("### ") {
-            ui.label(RichText::new(&line[4..]).size(16.0).strong());
-        } else if line.starts_with("## ") {
-            ui.label(RichText::new(&line[3..]).size(18.0).strong());
-        } else if line.starts_with("# ") {
-            ui.label(RichText::new(&line[2..]).size(20.0).strong());
+        if let Some(stripped) = line.strip_prefix("### ") {
+            ui.label(RichText::new(stripped).size(16.0).strong());
+        } else if let Some(stripped) = line.strip_prefix("## ") {
+            ui.label(RichText::new(stripped).size(18.0).strong());
+        } else if let Some(stripped) = line.strip_prefix("# ") {
+            ui.label(RichText::new(stripped).size(20.0).strong());
         } else if line.starts_with("```") {
             ui.label(
                 RichText::new(line)
@@ -835,9 +835,9 @@ fn render_markdown(ui: &mut egui::Ui, text: &str) {
                     .color(Color32::from_rgb(150, 150, 150))
                     .monospace(),
             );
-        } else if line.starts_with("- ") || line.starts_with("* ") {
+        } else if let Some(stripped) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
             ui.label(
-                RichText::new(format!("  > {}", &line[2..]))
+                RichText::new(format!("  > {}", stripped))
                     .size(12.0),
             );
         } else if line.starts_with("> ") {
