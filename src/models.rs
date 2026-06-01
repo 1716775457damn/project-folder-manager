@@ -105,7 +105,7 @@ impl FileCategory {
         ]
     }
 
-    pub fn display_name(&self) -> &str {
+    pub fn display_name(&self) -> &'static str {
         match self {
             FileCategory::Code => "代码",
             FileCategory::Image => "图片",
@@ -127,7 +127,7 @@ impl FileCategory {
         }
     }
 
-    pub fn icon(&self) -> &str {
+    pub fn icon(&self) -> &'static str {
         match self {
             FileCategory::Code => "{}",
             FileCategory::Image => "[i]",

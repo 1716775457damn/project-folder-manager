@@ -27,6 +27,11 @@
 - [x] Completed Phase 5: Releases & Release Deployment
   - Pushed the clippy-clean optimized code to GitHub master.
   - Tagged the current stable commit as version `v0.1.3` and successfully pushed it to GitHub. This triggers the GitHub Actions release workflow to compile and upload the finalized `project-folder-manager.exe` to the Releases page.
+- [x] Completed Phase 6: Interactive & Analytical Powerups
+  - Developed a full **Markdown Space Occupancy Report Exporter** which recurses the scanning result to calculate file space distribution and locates the top 10 largest files with relative paths, outputting a gorgeous, detailed analysis log inside the project root folder.
+  - Integrated **global keyboard hotkey bindings** (`F5` for scan refresh and `Escape` for instant search resetting / preview closure).
+  - Beautified the **file search result cards** inside `src/ui/search.rs` to render file type indicators (with code, image, doc specific colors and icons) along with relative project paths on rounded list containers with full hover border transitions.
+  - Modified model enum signatures `display_name` and `icon` in `src/models.rs` to return `&'static str` literals to resolve Rust lifetime borrow bounds natively.
 
 ### In Progress
 - None. All tasks completed successfully.
