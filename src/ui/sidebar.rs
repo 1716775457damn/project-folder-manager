@@ -195,39 +195,64 @@ fn render_project_item(app: &mut App, ui: &mut Ui, idx: usize) {
     let project = app.config.projects[idx].clone();
     let is_selected = app.selected_project_index == Some(idx);
 
-    let resp_opt = ui
-        .selectable_label(is_selected, "")
-        .context_menu(|ui| {
-            if ui.button("编辑").clicked() {
-                app.start_editing_project(idx);
-                ui.close_menu();
-            }
-            if ui
-                .button(RichText::new("删除").color(egui::Color32::RED))
-                .clicked()
-            {
-                app.remove_project(idx);
-                ui.close_menu();
-            }
-        });
+    let line_height = if !project.description.is_empty() && is_selected {
+        72.0
+    } else if is_selected {
+        56.0
+    } else {
+        42.0
+    };
 
-    if let Some(ref inner) = resp_opt {
-        let rect = inner.response.rect;
+    let (rect, response) = ui.allocate_at_least(egui::vec2(ui.available_width(), line_height), egui::Sense::click());
+
+    // 绑定右键菜单
+    response.clone().context_menu(|ui| {
+        if ui.button("编辑").clicked() {
+            app.start_editing_project(idx);
+            ui.close_menu();
+        }
+        if ui
+            .button(RichText::new("删除").color(egui::Color32::RED))
+            .clicked()
+        {
+            app.remove_project(idx);
+            ui.close_menu();
+        }
+    });
+
+    if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
 
-        if is_selected {
-            painter.rect_filled(
-                rect,
-                4.0,
-                egui::Color32::from_rgba_premultiplied(60, 100, 200, 40),
-            );
-        }
+        // 动态卡片配色
+        let stroke_color = if is_selected {
+            egui::Color32::from_rgb(59, 130, 246) // 活跃的科技蓝边框
+        } else if response.hovered() {
+            egui::Color32::from_rgb(75, 85, 99)   // 灰悬停边框
+        } else {
+            egui::Color32::from_rgb(45, 55, 72)   // 默认边框
+        };
 
-        // 项目类型标签（自动发现的显示）
-        let mut x_offset = 8.0;
+        let bg_fill = if is_selected {
+            egui::Color32::from_rgba_unmultiplied(59, 130, 246, 25) // 极浅的蓝底
+        } else if response.hovered() {
+            egui::Color32::from_rgb(45, 55, 72)   // 悬浮深灰
+        } else {
+            egui::Color32::from_rgb(31, 41, 55)   // 卡片默认底色
+        };
+
+        // 绘制圆角卡片背景
+        painter.rect(
+            rect,
+            6.0,
+            bg_fill,
+            egui::Stroke::new(1.0, stroke_color),
+        );
+
+        // 1. 项目类型标签
+        let mut x_offset = 10.0;
         if project.auto_discovered && !project.project_type.is_empty() {
             let type_color = ProjectInfo::type_color(&project.project_type);
-            let type_pos = egui::pos2(rect.left() + x_offset, rect.top() + 4.0);
+            let type_pos = egui::pos2(rect.left() + x_offset, rect.top() + 6.0);
             painter.text(
                 type_pos,
                 egui::Align2::LEFT_TOP,
@@ -242,28 +267,31 @@ fn render_project_item(app: &mut App, ui: &mut Ui, idx: usize) {
             ).rect.width();
         }
 
-        let name_pos = egui::pos2(rect.left() + x_offset, rect.top() + 4.0);
+        // 2. 项目名称
+        let name_pos = egui::pos2(rect.left() + x_offset, rect.top() + 6.0);
         painter.text(
             name_pos,
             egui::Align2::LEFT_TOP,
             &project.name,
-            egui::FontId::proportional(14.0),
+            egui::FontId::proportional(13.0),
             if is_selected {
                 egui::Color32::WHITE
             } else {
-                egui::Color32::from_rgb(200, 200, 200)
+                egui::Color32::from_rgb(229, 231, 235)
             },
         );
 
-        let path_pos = egui::pos2(rect.left() + 8.0, rect.top() + 22.0);
+        // 3. 项目路径
+        let path_pos = egui::pos2(rect.left() + 10.0, rect.top() + 24.0);
         painter.text(
             path_pos,
             egui::Align2::LEFT_TOP,
             shorten_path(&project.path, 35),
             egui::FontId::proportional(10.0),
-            egui::Color32::from_rgb(140, 140, 140),
+            egui::Color32::from_rgb(156, 163, 175),
         );
 
+        // 4. 选择后展示大小和扫描状态
         if is_selected {
             if let Some(ref scan) = app.scan_result {
                 let size_text = format!(
@@ -271,28 +299,29 @@ fn render_project_item(app: &mut App, ui: &mut Ui, idx: usize) {
                     humansize::format_size(scan.total_size, humansize::BINARY),
                     scan.file_count
                 );
-                let sp = egui::pos2(rect.left() + 8.0, rect.top() + 36.0);
+                let sp = egui::pos2(rect.left() + 10.0, rect.top() + 38.0);
                 painter.text(
                     sp,
                     egui::Align2::LEFT_TOP,
                     size_text,
                     egui::FontId::proportional(10.0),
-                    egui::Color32::from_rgb(160, 200, 255),
+                    egui::Color32::from_rgb(147, 197, 253),
                 );
             } else if app.is_scanning {
-                let sp = egui::pos2(rect.left() + 8.0, rect.top() + 36.0);
+                let sp = egui::pos2(rect.left() + 10.0, rect.top() + 38.0);
                 painter.text(
                     sp,
                     egui::Align2::LEFT_TOP,
                     "扫描中...",
                     egui::FontId::proportional(10.0),
-                    egui::Color32::from_rgb(255, 200, 100),
+                    egui::Color32::from_rgb(253, 186, 116),
                 );
             }
         }
 
+        // 5. 项目用途描述
         if !project.description.is_empty() && is_selected {
-            let dp = egui::pos2(rect.left() + 8.0, rect.top() + 50.0);
+            let dp = egui::pos2(rect.left() + 10.0, rect.top() + 52.0);
             let desc = if project.description.len() > 40 {
                 format!("{}...", &project.description[..40])
             } else {
@@ -303,24 +332,15 @@ fn render_project_item(app: &mut App, ui: &mut Ui, idx: usize) {
                 egui::Align2::LEFT_TOP,
                 desc,
                 egui::FontId::proportional(10.0),
-                egui::Color32::from_rgb(180, 180, 180),
+                egui::Color32::from_rgb(209, 213, 219),
             );
         }
-
-        let line_height = if !project.description.is_empty() && is_selected {
-            66.0
-        } else if is_selected {
-            52.0
-        } else {
-            38.0
-        };
-        ui.add_space(line_height - 18.0);
-
-        if inner.response.clicked() {
-            app.select_project(idx);
-        }
     }
-    ui.add_space(2.0);
+
+    if response.clicked() {
+        app.select_project(idx);
+    }
+    ui.add_space(6.0);
 }
 
 fn render_add_dialog(app: &mut App, ui: &mut Ui) {
