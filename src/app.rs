@@ -25,7 +25,7 @@ pub struct App {
     pub selected_project_index: Option<usize>,
     pub scan_result: Option<Arc<ScanResult>>,
     pub is_scanning: bool,
-    scan_rx: Option<std::sync::mpsc::Receiver<ScanResult>>,
+    scan_rx: Option<std::sync::mpsc::Receiver<Result<ScanResult, String>>>,
 
     // 文件树
     pub expanded_dirs: HashSet<PathBuf>,
@@ -142,15 +142,7 @@ impl App {
         self.scan_rx = Some(rx);
 
         std::thread::spawn(move || {
-            let result = scanner::scan_directory(&path);
-            match result {
-                Ok(scan) => {
-                    tx.send(scan).ok();
-                }
-                Err(e) => {
-                    eprintln!("扫描失败: {}", e);
-                }
-            }
+            let _ = tx.send(scanner::scan_directory(&path));
         });
     }
 
@@ -168,18 +160,31 @@ impl App {
     /// 检查后台扫描是否完成
     fn check_scan_result(&mut self) {
         if let Some(rx) = &self.scan_rx {
-            if let Ok(result) = rx.try_recv() {
-                // 自动展开第一层目录
-                for child in &result.root.children {
-                    if child.is_dir {
-                        self.expanded_dirs.insert(child.path.clone());
+            match rx.try_recv() {
+                Ok(Ok(result)) => {
+                    // 自动展开第一层目录
+                    for child in &result.root.children {
+                        if child.is_dir {
+                            self.expanded_dirs.insert(child.path.clone());
+                        }
                     }
-                }
 
-                self.scan_result = Some(Arc::new(result));
-                self.scan_rx = None;
-                self.is_scanning = false;
-                self.status_message = "扫描完成".to_string();
+                    self.scan_result = Some(Arc::new(result));
+                    self.scan_rx = None;
+                    self.is_scanning = false;
+                    self.status_message = "扫描完成".to_string();
+                }
+                Ok(Err(e)) => {
+                    self.scan_rx = None;
+                    self.is_scanning = false;
+                    self.status_message = format!("扫描失败: {}", e);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.scan_rx = None;
+                    self.is_scanning = false;
+                    self.status_message = "扫描失败，请检查目录是否可访问".to_string();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
     }
