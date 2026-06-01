@@ -42,6 +42,9 @@ pub struct App {
     pub search_results: Arc<Vec<PathBuf>>,
     pub search_debounce: Option<Instant>,
     pub pending_search: bool,
+    pub is_searching: bool,
+    pub search_rx: Option<std::sync::mpsc::Receiver<Vec<PathBuf>>>,
+    pub search_cancel: Option<Arc<AtomicBool>>,
 
     // 添加项目对话框
     pub show_add_dialog: bool,
@@ -95,6 +98,9 @@ impl App {
             search_results: Arc::new(Vec::new()),
             search_debounce: None,
             pending_search: false,
+            is_searching: false,
+            search_rx: None,
+            search_cancel: None,
             show_add_dialog: false,
             new_project_path: String::new(),
             new_project_name: String::new(),
@@ -185,6 +191,26 @@ impl App {
                     self.status_message = "扫描失败，请检查目录是否可访问".to_string();
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
+    }
+
+    /// 检查后台搜索是否完成
+    fn check_search_result(&mut self) {
+        if let Some(rx) = &self.search_rx {
+            match rx.try_recv() {
+                Ok(results) => {
+                    self.search_results = Arc::new(results);
+                    self.search_rx = None;
+                    self.search_cancel = None;
+                    self.is_searching = false;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.search_rx = None;
+                    self.search_cancel = None;
+                    self.is_searching = false;
+                }
             }
         }
     }
@@ -303,17 +329,38 @@ impl App {
         self.preview_content = preview::load_preview(path);
     }
 
-    /// 执行搜索
+    /// 执行搜索（异步非阻塞）
     pub fn perform_search(&mut self) {
-        self.search_results = Arc::new(Vec::new());
+        // 先取消上一次正在进行的搜索
+        if let Some(cancel) = &self.search_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
 
         if self.search_query.is_empty() {
+            self.search_results = Arc::new(Vec::new());
+            self.is_searching = false;
+            self.search_rx = None;
+            self.search_cancel = None;
             return;
         }
 
         if let Some(idx) = self.selected_project_index {
             let root = PathBuf::from(&self.config.projects[idx].path);
-            self.search_results = Arc::new(scanner::search_files(&root, &self.search_query));
+            let query = self.search_query.clone();
+            
+            let cancel = Arc::new(AtomicBool::new(false));
+            self.search_cancel = Some(cancel.clone());
+            self.is_searching = true;
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.search_rx = Some(rx);
+
+            std::thread::spawn(move || {
+                let results = scanner::search_files(&root, &query, &cancel);
+                if !cancel.load(Ordering::Relaxed) {
+                    let _ = tx.send(results).ok();
+                }
+            });
         }
     }
 
@@ -452,6 +499,7 @@ impl eframe::App for App {
         // 检查后台扫描
         self.check_scan_result();
         self.check_auto_scan();
+        self.check_search_result();
 
         // 搜索防抖：300ms 无输入后触发
         if self.pending_search {
@@ -472,7 +520,7 @@ impl eframe::App for App {
         });
 
         // 持续刷新以处理后台任务
-        if self.is_scanning || self.is_auto_scanning {
+        if self.is_scanning || self.is_auto_scanning || self.is_searching {
             ctx.request_repaint();
         }
     }

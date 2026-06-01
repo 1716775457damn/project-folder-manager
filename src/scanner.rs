@@ -207,7 +207,7 @@ fn get_modified_time(path: &Path) -> Option<DateTime<Utc>> {
         .and_then(|d| Utc.timestamp_opt(d.as_secs() as i64, 0).single())
 }
 
-pub fn search_files(root_path: &Path, query: &str) -> Vec<PathBuf> {
+pub fn search_files(root_path: &Path, query: &str, cancel: &Arc<AtomicBool>) -> Vec<PathBuf> {
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
 
@@ -217,6 +217,9 @@ pub fn search_files(root_path: &Path, query: &str) -> Vec<PathBuf> {
         .into_iter()
         .filter_entry(skip_hidden_and_artifact_dirs)
     {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         if let Ok(entry) = entry {
             let name = entry.file_name().to_string_lossy().to_lowercase();
             if name.contains(&query_lower) {
@@ -283,11 +286,9 @@ const SYSTEM_DIRS: &[&str] = &[
 /// 获取当前系统可用磁盘列表
 fn get_available_drives() -> Vec<String> {
     let mut drives = Vec::new();
-    for letter in b'A'..=b'Z' {
-        let drive = format!("{}:\\", letter as char);
-        if Path::new(&drive).exists() {
-            drives.push(drive);
-        }
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    for disk in &disks {
+        drives.push(disk.mount_point().to_string_lossy().into_owned());
     }
     drives
 }

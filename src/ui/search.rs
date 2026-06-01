@@ -28,6 +28,10 @@ pub fn render(app: &mut App, ui: &mut Ui) {
             app.search_query.clear();
             app.search_results = Arc::new(Vec::new());
         }
+
+        if app.is_searching {
+            ui.spinner();
+        }
     });
 
     ui.add_space(4.0);
@@ -71,6 +75,12 @@ pub fn render(app: &mut App, ui: &mut Ui) {
                     }
                 }
             });
+    } else if app.is_searching {
+        ui.label(
+            RichText::new("正在搜索中...")
+                .size(11.0)
+                .color(Color32::from_rgb(255, 200, 100)),
+        );
     } else if app.search_query.is_empty() {
         ui.label(
             RichText::new("输入文件名关键词搜索")

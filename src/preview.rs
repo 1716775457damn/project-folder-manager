@@ -75,27 +75,49 @@ fn load_image_preview(path: &Path) -> PreviewContent {
 
 /// 加载文本/代码预览
 fn load_text_preview(path: &Path, extension: &str) -> PreviewContent {
+    use std::io::Read;
     const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+    const PREVIEW_LIMIT: u64 = 100_000; // 100KB
 
     // 先检查文件大小，防止 OOM
-    if let Ok(meta) = fs::metadata(path) {
-        if meta.len() > MAX_FILE_SIZE {
-            return PreviewContent::Unsupported(format!(
-                "文件过大 ({}), 无法预览文本",
-                humansize::format_size(meta.len(), humansize::BINARY)
-            ));
+    let file_size = match fs::metadata(path) {
+        Ok(meta) => {
+            if meta.len() > MAX_FILE_SIZE {
+                return PreviewContent::Unsupported(format!(
+                    "文件过大 ({}), 无法预览文本",
+                    humansize::format_size(meta.len(), humansize::BINARY)
+                ));
+            }
+            meta.len()
         }
-    }
-
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => return PreviewContent::Unsupported(format!("文件读取失败: {}", e)),
+        Err(e) => return PreviewContent::Unsupported(format!("获取文件信息失败: {}", e)),
     };
 
-    // 限制预览长度（避免大文件卡顿）
-    let preview_text = if content.len() > 100_000 {
-        let truncated: String = content.chars().take(100_000).collect();
-        format!("{}\n\n... (文件过大，仅显示前 100KB)", truncated)
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => return PreviewContent::Unsupported(format!("文件打开失败: {}", e)),
+    };
+
+    let mut buffer = Vec::new();
+    let mut handle = file.take(PREVIEW_LIMIT);
+    if let Err(e) = handle.read_to_end(&mut buffer) {
+        return PreviewContent::Unsupported(format!("文件读取失败: {}", e));
+    }
+
+    let content = match std::str::from_utf8(&buffer) {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            let valid_len = e.valid_up_to();
+            if valid_len > 0 {
+                String::from_utf8_lossy(&buffer[..valid_len]).into_owned()
+            } else {
+                return PreviewContent::Unsupported("此文件可能不是纯文本文件或编码格式不支持".to_string());
+            }
+        }
+    };
+
+    let preview_text = if file_size > PREVIEW_LIMIT {
+        format!("{}\n\n... (文件过大，仅显示前 100KB)", content)
     } else {
         content
     };
