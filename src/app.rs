@@ -928,56 +928,115 @@ fn render_preview_panel(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context) {
     }
 }
 
-/// 简易 Markdown 渲染
+/// 简易 Markdown 渲染（增强版：代码块卡片化、区块引用边框化、行内富文本统一化）
 fn render_markdown(ui: &mut egui::Ui, text: &str) {
+    let mut is_in_code_block = false;
+    let mut code_accumulator = String::new();
+
     for line in text.lines() {
-        if let Some(stripped) = line.strip_prefix("### ") {
-            ui.label(RichText::new(stripped).size(16.0).strong());
-        } else if let Some(stripped) = line.strip_prefix("## ") {
-            ui.label(RichText::new(stripped).size(18.0).strong());
-        } else if let Some(stripped) = line.strip_prefix("# ") {
-            ui.label(RichText::new(stripped).size(20.0).strong());
-        } else if line.starts_with("```") {
-            ui.label(
-                RichText::new(line)
-                    .size(12.0)
-                    .color(Color32::from_rgb(150, 150, 150))
-                    .monospace(),
-            );
-        } else if let Some(stripped) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
-            ui.label(
-                RichText::new(format!("  > {}", stripped))
-                    .size(12.0),
-            );
-        } else if line.starts_with("> ") {
-            ui.label(
-                RichText::new(line)
-                    .size(12.0)
-                    .color(Color32::from_rgb(150, 180, 150)),
-            );
-        } else if line.is_empty() {
-            ui.add_space(4.0);
-        } else {
-            // 行内代码
-            if line.contains('`') {
-                ui.horizontal_wrapped(|ui| {
-                    let parts: Vec<&str> = line.split('`').collect();
-                    for (i, part) in parts.iter().enumerate() {
-                        if i % 2 == 0 {
-                            ui.label(RichText::new(*part).size(12.0));
-                        } else {
-                            ui.label(
-                                RichText::new(*part)
-                                    .size(12.0)
-                                    .monospace()
-                                    .color(Color32::from_rgb(255, 200, 100)),
-                            );
-                        }
-                    }
-                });
+        // 处理代码块状态
+        if line.starts_with("```") {
+            if is_in_code_block {
+                // 结束代码块并绘制
+                let code_content = code_accumulator.trim_end().to_string();
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(10, 15, 26)) // 极暗底色
+                    .rounding(5.0)
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(&code_content)
+                                .monospace()
+                                .size(11.5)
+                                .color(Color32::from_rgb(209, 213, 219)),
+                        );
+                    });
+                code_accumulator.clear();
+                is_in_code_block = false;
             } else {
-                ui.label(RichText::new(line).size(12.0));
+                is_in_code_block = true;
             }
+            continue;
         }
+
+        // 如果处于代码块内部，仅仅收集文本不进行 Markdown 解析
+        if is_in_code_block {
+            code_accumulator.push_str(line);
+            code_accumulator.push('\n');
+            continue;
+        }
+
+        // 分割线
+        if line.starts_with("---") || line.starts_with("___") {
+            ui.separator();
+            ui.add_space(2.0);
+            continue;
+        }
+
+        // 解析常规 Markdown
+        if let Some(stripped) = line.strip_prefix("### ") {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(stripped)
+                    .size(14.0)
+                    .color(Color32::from_rgb(147, 197, 253)) // H3
+                    .strong(),
+            );
+        } else if let Some(stripped) = line.strip_prefix("## ") {
+            ui.add_space(6.0);
+            ui.label(RichText::new(stripped).size(16.0).strong().color(Color32::WHITE));
+            ui.add_space(2.0);
+        } else if let Some(stripped) = line.strip_prefix("# ") {
+            ui.add_space(8.0);
+            ui.label(RichText::new(stripped).size(19.0).strong().color(Color32::WHITE));
+            ui.separator();
+            ui.add_space(2.0);
+        } else if let Some(stripped) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(" • ").color(Color32::from_rgb(59, 130, 246)).strong());
+                render_rich_text_line(ui, stripped);
+            });
+        } else if let Some(stripped) = line.strip_prefix("> ") {
+            ui.add_space(2.0);
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgb(31, 41, 55)) // 引用底色
+                .rounding(3.0)
+                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        // 翠绿色引用边条
+                        ui.label(RichText::new("▎").color(Color32::from_rgb(16, 185, 129)).strong());
+                        render_rich_text_line(ui, stripped);
+                    });
+                });
+            ui.add_space(2.0);
+        } else if line.is_empty() {
+            ui.add_space(6.0);
+        } else {
+            render_rich_text_line(ui, line);
+        }
+    }
+}
+
+/// 渲染支持行内代码 `` ` `` 识别的富文本行
+fn render_rich_text_line(ui: &mut egui::Ui, text: &str) {
+    if text.contains('`') {
+        ui.horizontal_wrapped(|ui| {
+            let parts: Vec<&str> = text.split('`').collect();
+            for (i, part) in parts.iter().enumerate() {
+                if i % 2 == 0 {
+                    ui.label(RichText::new(*part).size(12.0).color(Color32::from_rgb(209, 213, 219)));
+                } else {
+                    ui.label(
+                        RichText::new(*part)
+                            .size(11.5)
+                            .monospace()
+                            .color(Color32::from_rgb(253, 186, 116)), // 温暖杏黄
+                    );
+                }
+            }
+        });
+    } else {
+        ui.label(RichText::new(text).size(12.0).color(Color32::from_rgb(209, 213, 219)));
     }
 }

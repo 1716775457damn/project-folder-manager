@@ -32,6 +32,7 @@
   - Integrated **global keyboard hotkey bindings** (`F5` for scan refresh and `Escape` for instant search resetting / preview closure).
   - Beautified the **file search result cards** inside `src/ui/search.rs` to render file type indicators (with code, image, doc specific colors and icons) along with relative project paths on rounded list containers with full hover border transitions.
   - Modified model enum signatures `display_name` and `icon` in `src/models.rs` to return `&'static str` literals to resolve Rust lifetime borrow bounds natively.
+  - Upgraded the **egui Markdown preview engine** with a stateful parser supporting horizontal rules (`---`), list items, left-border翠绿 (emerald green) blockquotes frame callouts, and multi-line code block code-frame capsules with dark space fills (`#0a0f1a`).
 
 ### In Progress
 - None. All tasks completed successfully.
