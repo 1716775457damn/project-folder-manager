@@ -212,6 +212,18 @@ impl App {
         self.config.projects.push(project);
         self.save_config();
         self.show_add_dialog = false;
+
+        // 自动选中新添加的项目并触发扫描
+        let index = self.config.projects.len() - 1;
+        self.selected_project_index = Some(index);
+        self.preview_content = PreviewContent::Empty;
+        self.preview_path = None;
+        self.search_results = Arc::new(Vec::new());
+        self.search_query.clear();
+        self.expanded_dirs.clear();
+        self.scan_result = None;
+        self.start_scan(index);
+
         self.status_message = "项目已添加".to_string();
     }
 
@@ -370,6 +382,18 @@ impl App {
             let project = self.auto_discovered.remove(index);
             self.config.projects.push(project);
             self.save_config();
+
+            // 自动选中并扫描
+            let idx = self.config.projects.len() - 1;
+            self.selected_project_index = Some(idx);
+            self.preview_content = PreviewContent::Empty;
+            self.preview_path = None;
+            self.search_results = Arc::new(Vec::new());
+            self.search_query.clear();
+            self.expanded_dirs.clear();
+            self.scan_result = None;
+            self.start_scan(idx);
+
             self.status_message = "项目已添加".to_string();
         }
     }
@@ -380,6 +404,20 @@ impl App {
         let projects: Vec<ProjectInfo> = self.auto_discovered.drain(..).collect();
         self.config.projects.extend(projects);
         self.save_config();
+
+        // 自动选中最后一个并扫描
+        if count > 0 {
+            let idx = self.config.projects.len() - 1;
+            self.selected_project_index = Some(idx);
+            self.preview_content = PreviewContent::Empty;
+            self.preview_path = None;
+            self.search_results = Arc::new(Vec::new());
+            self.search_query.clear();
+            self.expanded_dirs.clear();
+            self.scan_result = None;
+            self.start_scan(idx);
+        }
+
         self.status_message = format!("已添加 {} 个项目", count);
     }
 
