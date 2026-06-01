@@ -482,6 +482,92 @@ impl App {
         self.status_message = format!("已添加 {} 个项目", count);
     }
 
+    /// 导出当前项目的可视化空间占用报告到 Markdown 文件中
+    pub fn export_project_report(&mut self) {
+        let scan_result = match &self.scan_result {
+            Some(res) => res,
+            None => {
+                self.status_message = "没有可导出的扫描结果，请先刷新或等待扫描完成".to_string();
+                return;
+            }
+        };
+
+        let idx = match self.selected_project_index {
+            Some(i) => i,
+            None => return,
+        };
+
+        let project = &self.config.projects[idx];
+        let project_path = PathBuf::from(&project.path);
+        let report_path = project_path.join("project_space_report.md");
+
+        // 递归收集所有文件以寻找 TOP 10 巨无霸文件
+        let mut all_files = Vec::new();
+        fn collect_files(entry: &FileEntry, files: &mut Vec<FileEntry>) {
+            if !entry.is_dir {
+                files.push(entry.clone());
+            } else {
+                for child in &entry.children {
+                    collect_files(child, files);
+                }
+            }
+        }
+        collect_files(&scan_result.root, &mut all_files);
+        all_files.sort_by_key(|f| std::cmp::Reverse(f.size));
+
+        // 编写高水平 Markdown 报告
+        let mut markdown = String::new();
+        markdown.push_str(&format!("# 项目空间占用分析报告 — {}\n\n", project.name));
+        markdown.push_str(&format!("- **项目路径**: `{}`\n", project.path));
+        markdown.push_str(&format!("- **分析时间**: {}\n", Local::now().format("%Y-%m-%d %H:%M:%S")));
+        markdown.push_str(&format!("- **总占用空间**: {}\n", humansize::format_size(scan_result.total_size, humansize::BINARY)));
+        markdown.push_str(&format!("- **总文件数**: {} 个\n", scan_result.file_count));
+        markdown.push_str(&format!("- **总目录数**: {} 个\n\n", scan_result.dir_count));
+
+        markdown.push_str("## 📊 资源分类占用占比\n\n");
+        markdown.push_str("| 类别 | 文件数量 | 占用大小 | 比例 |\n");
+        markdown.push_str("|---|---|---|---|\n");
+        let total = scan_result.total_size.max(1);
+        for stats in &scan_result.category_stats {
+            let pct = stats.size as f32 / total as f32 * 100.0;
+            markdown.push_str(&format!(
+                "| {} | {} | {} | {:.2}% |\n",
+                stats.category.display_name(),
+                stats.count,
+                humansize::format_size(stats.size, humansize::BINARY),
+                pct
+            ));
+        }
+        markdown.push('\n');
+
+        markdown.push_str("## 💾 TOP 10 空间占用文件\n\n");
+        markdown.push_str("| # | 文件名称 | 文件路径 (相对项目根) | 大小 |\n");
+        markdown.push_str("|---|---|---|---|\n");
+        for (i, file) in all_files.iter().take(10).enumerate() {
+            let rel_path = file.path.strip_prefix(&project_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| file.path.to_string_lossy().to_string());
+            markdown.push_str(&format!(
+                "| {} | `{}` | `{}` | {} |\n",
+                i + 1,
+                file.name,
+                rel_path,
+                humansize::format_size(file.size, humansize::BINARY)
+            ));
+        }
+        markdown.push_str("\n\n---\n*报告由 Project Folder Manager 自动生成*");
+
+        // 写入文件
+        match std::fs::write(&report_path, markdown) {
+            Ok(_) => {
+                self.status_message = "空间报告已成功导出到项目目录：project_space_report.md".to_string();
+            }
+            Err(e) => {
+                self.status_message = format!("报告导出失败: {}", e);
+            }
+        }
+    }
+
     /// 保存配置，失败时将错误信息写入 status_message
     fn save_config(&mut self) -> bool {
         match config::save_config(&self.config, Some(&self.config_path)) {
@@ -496,6 +582,17 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 键盘快捷键监听
+        if ctx.input(|i| i.key_pressed(egui::Key::F5)) {
+            self.refresh_scan();
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.search_query.clear();
+            self.search_results = Arc::new(Vec::new());
+            self.preview_path = None;
+            self.preview_content = PreviewContent::Empty;
+        }
+
         // 检查后台扫描
         self.check_scan_result();
         self.check_auto_scan();
@@ -698,6 +795,18 @@ fn render_toolbar(app: &mut App, ui: &mut egui::Ui) {
             // 刷新按钮
             if ui.button("刷新").clicked() {
                 app.refresh_scan();
+            }
+
+            // 导出报告按钮
+            if app.scan_result.is_some()
+                && ui
+                    .button(
+                        RichText::new("导出分析报告")
+                            .color(Color32::from_rgb(100, 255, 150)),
+                    )
+                    .clicked()
+            {
+                app.export_project_report();
             }
         });
     });
