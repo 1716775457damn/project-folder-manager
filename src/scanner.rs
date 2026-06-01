@@ -484,6 +484,110 @@ fn scan_dir_recursive(
     }
 }
 
+/// 已知的项目容器目录名（小写），这些目录优先扫描且享有更深递归深度
+const PROJECT_CONTAINER_NAMES: &[&str] = &[
+    "projects", "project", "dev", "code", "src", "source",
+    "workspace", "workspaces", "repo", "repos", "git", "work",
+];
+
+/// 检查目录名是否是已知的项目容器
+fn is_project_container(name: &str) -> bool {
+    PROJECT_CONTAINER_NAMES.contains(&name.to_lowercase().as_str())
+}
+
+/// 对目录列表排序：项目容器目录排在前面
+fn sort_dirs_by_priority(dirs: &mut Vec<PathBuf>) {
+    dirs.sort_by(|a, b| {
+        let a_name = a.file_name().map(|n| n.to_string_lossy().to_string().to_lowercase()).unwrap_or_default();
+        let b_name = b.file_name().map(|n| n.to_string_lossy().to_string().to_lowercase()).unwrap_or_default();
+        let a_prio = is_project_container(&a_name);
+        let b_prio = is_project_container(&b_name);
+        b_prio.cmp(&a_prio) // true > false，所以项目容器排在前面
+    });
+}
+
+/// 扫描单个根目录，收集其子目录并按优先级排序后递归扫描
+fn scan_root(
+    root: &Path,
+    tx: &std::sync::mpsc::Sender<AutoScanProgress>,
+    cancel: &Arc<AtomicBool>,
+    all_found: &mut Vec<ProjectInfo>,
+    dirs_scanned: &mut u32,
+) {
+    const NORMAL_MAX_DEPTH: u32 = 4;
+    const CONTAINER_MAX_DEPTH: u32 = 6;
+
+    if cancel.load(Ordering::Relaxed) {
+        return;
+    }
+
+    eprintln!("[scan] Scanning root: {}", root.display());
+    let _ = tx.send(AutoScanProgress::ScanningDrive(root.display().to_string()));
+
+    let entries = match fs::read_dir(root) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("[scan] Cannot read root {}: {}", root.display(), e);
+            return;
+        }
+    };
+
+    // 收集顶层目录：先收入所有目录，再排序
+    let mut top_dirs: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        if SYSTEM_DIRS.contains(&name.as_str()) {
+            continue;
+        }
+        if name.starts_with('.') {
+            continue;
+        }
+        top_dirs.push(path);
+    }
+
+    // 排序：项目容器目录优先，确保它们在 MAX_DIRS_PER_LEVEL 截断时不被丢弃
+    sort_dirs_by_priority(&mut top_dirs);
+
+    let total = top_dirs.len();
+    eprintln!("[scan] {} has {} top-level dirs, scanning up to {}", root.display(), total, MAX_DIRS_PER_LEVEL);
+
+    for (i, dir) in top_dirs.iter().enumerate() {
+        if i >= MAX_DIRS_PER_LEVEL {
+            eprintln!("[scan] Reached MAX_DIRS_PER_LEVEL ({MAX_DIRS_PER_LEVEL}), skipping remaining {}/{} dirs", total - i, total);
+            break;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let name = dir.file_name().map(|n| n.to_string_lossy().to_string().to_lowercase()).unwrap_or_default();
+        let is_container = is_project_container(&name);
+
+        if is_project_dir(dir) {
+            *dirs_scanned += 1;
+            let project = create_project_info(dir);
+            eprintln!("[scan] FOUND project (L1): {}", dir.display());
+            let _ = tx.send(AutoScanProgress::FoundProject(project.clone()));
+            all_found.push(project);
+        } else {
+            // 项目容器目录用更深的最大深度
+            let max_depth = if is_container { CONTAINER_MAX_DEPTH } else { NORMAL_MAX_DEPTH };
+            if is_container {
+                eprintln!("[scan] Container dir: {}, using max_depth={}", dir.display(), max_depth);
+            }
+            scan_dir_recursive(dir, 2, max_depth, tx, cancel, all_found, dirs_scanned);
+        }
+    }
+}
+
 /// 启动磁盘扫描线程，通过 channel 回传进度。
 /// `cancel` 为取消标志，UI 设置为 true 后扫描会尽快退出。
 pub fn discover_projects(tx: std::sync::mpsc::Sender<AutoScanProgress>, cancel: Arc<AtomicBool>) {
@@ -493,67 +597,32 @@ pub fn discover_projects(tx: std::sync::mpsc::Sender<AutoScanProgress>, cancel: 
         let mut all_found: Vec<ProjectInfo> = Vec::new();
         let mut dirs_scanned = 0u32;
 
-        // 最大深度：盘符算 L0，L1=顶层目录，L2/L3/L4=子目录
-        const MAX_SCAN_DEPTH: u32 = 4;
+        // 收集所有扫描根目录
+        let mut roots: Vec<PathBuf> = drives.iter().map(PathBuf::from).collect();
 
-        for drive in &drives {
+        // 将 USERPROFILE 加入扫描根（如果不在已有磁盘列表中）
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            let home_path = PathBuf::from(&home);
+            // 检查 USERPROFILE 本身是不是项目（如 dotfiles 仓库）
+            if is_project_dir(&home_path) {
+                dirs_scanned += 1;
+                let project = create_project_info(&home_path);
+                eprintln!("[scan] FOUND project (home itself): {}", home_path.display());
+                let _ = tx.send(AutoScanProgress::FoundProject(project.clone()));
+                all_found.push(project);
+            }
+            if !roots.contains(&home_path) {
+                eprintln!("[scan] Added USERPROFILE as scan root: {}", home_path.display());
+                roots.push(home_path);
+            }
+        }
+
+        for root in &roots {
             if cancel.load(Ordering::Relaxed) {
-                eprintln!("[scan] Cancelled before drive {}", drive);
+                eprintln!("[scan] Cancelled before root {}", root.display());
                 break;
             }
-
-            eprintln!("[scan] Scanning drive: {}", drive);
-            let _ = tx.send(AutoScanProgress::ScanningDrive(drive.clone()));
-
-            let drive_path = Path::new(drive);
-            let entries = match fs::read_dir(drive_path) {
-                Ok(e) => e,
-                Err(e) => {
-                    eprintln!("[scan] Cannot read drive {}: {}", drive, e);
-                    continue;
-                }
-            };
-
-            let mut top_dirs: Vec<PathBuf> = Vec::new();
-            for entry in entries.flatten() {
-                if top_dirs.len() >= MAX_DIRS_PER_LEVEL {
-                    break;
-                }
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-
-                if SYSTEM_DIRS.contains(&name.as_str()) {
-                    continue;
-                }
-                if name.starts_with('.') {
-                    continue;
-                }
-                top_dirs.push(path);
-            }
-
-            eprintln!("[scan] {} has {} top-level dirs (after filter)", drive, top_dirs.len());
-
-            for dir in &top_dirs {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                if is_project_dir(dir) {
-                    dirs_scanned += 1;
-                    let project = create_project_info(dir);
-                    eprintln!("[scan] FOUND project (L1): {}", dir.display());
-                    let _ = tx.send(AutoScanProgress::FoundProject(project.clone()));
-                    all_found.push(project);
-                } else {
-                    // 从 L2 开始递归扫描
-                    scan_dir_recursive(dir, 2, MAX_SCAN_DEPTH, &tx, &cancel, &mut all_found, &mut dirs_scanned);
-                }
-            }
+            scan_root(root, &tx, &cancel, &mut all_found, &mut dirs_scanned);
         }
 
         eprintln!("[scan] Done. {} dirs checked, {} projects found", dirs_scanned, all_found.len());
