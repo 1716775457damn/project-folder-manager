@@ -77,10 +77,20 @@ fn load_chinese_font(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
     let font_paths = [
+        // Windows
         "C:\\Windows\\Fonts\\msyh.ttc",
         "C:\\Windows\\Fonts\\msyhbd.ttc",
         "C:\\Windows\\Fonts\\simhei.ttf",
         "C:\\Windows\\Fonts\\simsun.ttc",
+        // macOS
+        "/System/Library/Fonts/PingFang.ttc",
+        "/Library/Fonts/Songti.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        // Linux
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/droid/DroidSansFallback.ttf",
     ];
 
     for path in &font_paths {

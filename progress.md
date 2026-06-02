@@ -33,6 +33,11 @@
   - Beautified the **file search result cards** inside `src/ui/search.rs` to render file type indicators (with code, image, doc specific colors and icons) along with relative project paths on rounded list containers with full hover border transitions.
   - Modified model enum signatures `display_name` and `icon` in `src/models.rs` to return `&'static str` literals to resolve Rust lifetime borrow bounds natively.
   - Upgraded the **egui Markdown preview engine** with a stateful parser supporting horizontal rules (`---`), list items, left-border翠绿 (emerald green) blockquotes frame callouts, and multi-line code block code-frame capsules with dark space fills (`#0a0f1a`).
+- [x] Completed Phase 7: Multi-Platform Actions Pipeline
+  - Upgraded **`load_chinese_font`** in `src/main.rs` to support standard macOS and Linux Chinese system fonts (PingFang, Songti, WQY MicroHei, ZenHei, Noto Sans CJK, Droid Sans Fallback) for absolute native rendering cross-platform.
+  - Rewrote **`.github/workflows/release.yml`** to implement a matrix build across three target runners (`windows-latest`, `ubuntu-latest`, `macos-latest`), targeting `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, and `x86_64-apple-darwin` natively.
+  - Wired Linux-specific dependency installations (`libgtk-3-dev`, `libx11-xcb-dev`, `libxkbcommon-dev`, `libasound2-dev`) directly into the CI pipeline.
+  - Structured automated packaging commands (`Compress-Archive` on Windows, `tar -czf` on Linux, `zip -j` on macOS) to compress compiled release targets to `.zip` / `.tar.gz` and publish them simultaneously in a single GitHub release.
 
 ### In Progress
 - None. All tasks completed successfully.
